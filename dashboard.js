@@ -171,25 +171,15 @@ function detectAmazonTab(callback) {
   });
 }
 
-// Ensure content script is injected into the Amazon tab
-function ensureContentScriptInjected(tabId, callback) {
+// Verify if the content script is active on the Amazon tab
+function verifyContentScriptActive(tabId, callback) {
   // Test if content script is active by sending a ping
   chrome.tabs.sendMessage(tabId, { action: 'ping' }, (response) => {
     if (chrome.runtime.lastError || !response || !response.success) {
-      console.log("Content script not detected. Injecting content.js dynamically...");
-      chrome.scripting.executeScript({
-        target: { tabId: tabId },
-        files: ['content.js']
-      }).then(() => {
-        console.log("Successfully injected content.js dynamically.");
-        // Give it a tiny delay to initialize
-        setTimeout(() => callback(true), 250);
-      }).catch(err => {
-        console.error("Failed to inject content.js dynamically:", err);
-        callback(false);
-      });
+      console.warn("Content script ping failed:", chrome.runtime.lastError ? chrome.runtime.lastError.message : "No response");
+      callback(false);
     } else {
-      console.log("Content script is already active and responding.");
+      console.log("Content script is active and responding.");
       callback(true);
     }
   });
@@ -231,10 +221,14 @@ function startScanHandler() {
     
     hideAlert();
     
-    // Ensure content script is injected before starting the scan
-    ensureContentScriptInjected(scanState.amazonTabId, (injected) => {
-      if (!injected) {
-        pauseScanDueToError("Failed to initialize connection script. Please refresh your Amazon tab and try again.");
+    // Verify that the content script is active before starting the scan
+    verifyContentScriptActive(scanState.amazonTabId, (active) => {
+      if (!active) {
+        showAlert(
+          "Connection Script Inactive",
+          "We found your Amazon India tab, but the connection script is not active. Please open your Amazon.in tab, reload/refresh the page, and then click 'Start Scan' again. This initializes the extension connector.",
+          "https://www.amazon.in/your-orders/orders"
+        );
         return;
       }
       
@@ -297,18 +291,17 @@ async function runScanCycle() {
       // Check for communication errors
       if (chrome.runtime.lastError) {
         console.error("Connection Error:", chrome.runtime.lastError.message);
-        // Attempt to inject the content script dynamically and retry
         detectAmazonTab((tabFound) => {
           if (!tabFound) {
             pauseScanDueToError("Amazon tab was closed. Please open Amazon.in and resume.");
           } else {
-            console.log("Tab is active, attempting to re-inject and retry...");
-            ensureContentScriptInjected(scanState.amazonTabId, (success) => {
-              if (success) {
-                // Retry scanning the page
+            // Check if connection can be re-established
+            verifyContentScriptActive(scanState.amazonTabId, (active) => {
+              if (active) {
+                // Retry once
                 setTimeout(runScanCycle, 1000);
               } else {
-                pauseScanDueToError("Could not establish connection with the Amazon tab. Please reload your Amazon tab and try again.");
+                pauseScanDueToError("Connection lost with the Amazon tab. Please open your Amazon.in tab, reload/refresh the page, and click Resume.");
               }
             });
           }
