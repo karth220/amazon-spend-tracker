@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Amazon India Spend Analyzer - Dashboard</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Sidebar / Topbar Navigation -->
+    <header class="app-header">
+      <div class="logo-area">
+        <span class="logo-icon">₹</span>
+        <div class="logo-text">
+          <h1>Amazon.in Spend Analyzer</h1>
+          <p>Scrape, aggregate, and visualize your entire purchase history</p>
+        </div>
+      </div>
+      
+      <!-- Control Panel -->
+      <div class="controls-panel">
+        <div class="control-group">
+          <label for="yearSelector">Scan Period</label>
+          <select id="yearSelector" class="select-input">
+            <option value="all">All Years (Automatic)</option>
+          </select>
+        </div>
+        
+        <div class="button-group">
+          <button id="scanBtn" class="btn btn-primary">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+            Start Scan
+          </button>
+          <button id="pauseBtn" class="btn btn-secondary" disabled>
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+            Pause
+          </button>
+          <button id="resetBtn" class="btn btn-danger">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            Clear Data
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Scan Progress Overlay -->
+    <div id="progressSection" class="progress-section hidden">
+      <div class="progress-info">
+        <span id="progressStatus">Ready to scan...</span>
+        <span id="progressPercent">0%</span>
+      </div>
+      <div class="progress-bar-bg">
+        <div id="progressBar" class="progress-bar" style="width: 0%;"></div>
+      </div>
+      <p id="progressTip" class="progress-tip">Tip: Keep the Amazon.in tab open in the background while scanning.</p>
+    </div>
+
+    <!-- Alert Banner (for warnings/CAPTCHA info) -->
+    <div id="alertBanner" class="alert-banner hidden">
+      <div class="alert-content">
+        <svg class="alert-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01"/></svg>
+        <div class="alert-text">
+          <strong id="alertTitle">Security Check Encountered</strong>
+          <span id="alertMessage">Please open your Amazon.in tab, solve the CAPTCHA, and click Resume.</span>
+        </div>
+      </div>
+      <button id="alertActionBtn" class="btn btn-alert">Go to Amazon.in</button>
+    </div>
+
+    <main class="app-main">
+      <!-- Empty State -->
+      <div id="emptyState" class="empty-state">
+        <div class="empty-illustration">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21.21 15.89A10 10 0 1 1 8 2.83M22 12A10 10 0 0 1 12 22M2 12h10M12 2v10m9.9-2.1A10 10 0 0 1 22 12h-2"/></svg>
+        </div>
+        <h2>No Spend History Scanned Yet</h2>
+        <p>Ensure you have a tab open logged in to <strong style="color: var(--accent-color);">amazon.in</strong>. Select your preferred scan period and click "Start Scan" above to calculate your total spends.</p>
+        <div class="guide-steps">
+          <div class="step">
+            <span class="step-num">1</span>
+            <h3>Connect Tab</h3>
+            <p>Ensure you have logged in to amazon.in in Chrome</p>
+          </div>
+          <div class="step">
+            <span class="step-num">2</span>
+            <h3>Scan Years</h3>
+            <p>We'll read pages from your order history locally</p>
+          </div>
+          <div class="step">
+            <span class="step-num">3</span>
+            <h3>Get Spends</h3>
+            <p>Visualize total spend, charts, and export results</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Dashboard Grid Content (shown when we have data) -->
+      <div id="dashboardContent" class="dashboard-content hidden">
+        
+        <!-- Metrics Cards Row -->
+        <section class="metrics-grid">
+          <div class="metric-card glass">
+            <div class="metric-header">
+              <span class="metric-title">TOTAL SPENT</span>
+              <span class="metric-icon">💰</span>
+            </div>
+            <div class="metric-value font-outfit" id="metricTotalSpent">₹0.00</div>
+            <div class="metric-subtitle" id="metricActivePeriod">Across all years</div>
+          </div>
+          
+          <div class="metric-card glass">
+            <div class="metric-header">
+              <span class="metric-title">TOTAL ORDERS</span>
+              <span class="metric-icon">📦</span>
+            </div>
+            <div class="metric-value font-outfit" id="metricTotalOrders">0</div>
+            <div class="metric-subtitle" id="metricDeliveredRatio">0 delivered</div>
+          </div>
+          
+          <div class="metric-card glass">
+            <div class="metric-header">
+              <span class="metric-title">AVERAGE ORDER VALUE</span>
+              <span class="metric-icon">📊</span>
+            </div>
+            <div class="metric-value font-outfit" id="metricAvgOrderValue">₹0.00</div>
+            <div class="metric-subtitle">Mean basket spend</div>
+          </div>
+          
+          <div class="metric-card glass">
+            <div class="metric-header">
+              <span class="metric-title">ITEMS BOUGHT</span>
+              <span class="metric-icon">🛍️</span>
+            </div>
+            <div class="metric-value font-outfit" id="metricItemsBought">0</div>
+            <div class="metric-subtitle" id="metricAvgItems">0 items per order</div>
+          </div>
+        </section>
+
+        <!-- Charts Grid Row -->
+        <section class="charts-grid">
+          <div class="chart-card glass">
+            <h3>Year-over-Year Spends</h3>
+            <div class="chart-container" id="yearlyChartContainer">
+              <!-- Dynamically rendered SVG bar chart -->
+            </div>
+          </div>
+          <div class="chart-card glass">
+            <h3>Seasonal Spending Pattern (by Month)</h3>
+            <div class="chart-container" id="monthlyChartContainer">
+              <!-- Dynamically rendered SVG bar chart -->
+            </div>
+          </div>
+        </section>
+
+        <!-- Orders Table and Search Section -->
+        <section class="table-card glass">
+          <div class="table-header">
+            <div class="table-title-group">
+              <h3>Scraped Transactions</h3>
+              <p id="transactionCount">Showing 0 of 0 orders</p>
+            </div>
+            <div class="export-group">
+              <button id="exportCsvBtn" class="btn btn-secondary btn-sm">Export CSV</button>
+              <button id="exportJsonBtn" class="btn btn-secondary btn-sm">Export JSON</button>
+            </div>
+          </div>
+
+          <!-- Filters Row -->
+          <div class="filters-row">
+            <div class="search-box">
+              <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input type="text" id="searchInput" placeholder="Search orders by item title, ID, or recipient...">
+            </div>
+            
+            <div class="filters-group">
+              <select id="filterYear" class="select-input">
+                <option value="all">All Years</option>
+              </select>
+              
+              <select id="filterStatus" class="select-input">
+                <option value="all">All Statuses</option>
+                <option value="Delivered">Delivered</option>
+                <option value="Cancelled">Cancelled</option>
+                <option value="Returned">Returned</option>
+                <option value="Refunded">Refunded</option>
+                <option value="In Transit">In Transit</option>
+              </select>
+
+              <select id="sortOrder" class="select-input">
+                <option value="date-desc">Newest First</option>
+                <option value="date-asc">Oldest First</option>
+                <option value="price-desc">Highest Price First</option>
+                <option value="price-asc">Lowest Price First</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Table Content -->
+          <div class="table-responsive">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Order ID</th>
+                  <th>Recipient</th>
+                  <th>Items Purchased</th>
+                  <th>Price</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="ordersTableBody">
+                <!-- Rows injected dynamically -->
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Pagination -->
+          <div class="pagination-row">
+            <button id="prevPageBtn" class="btn btn-text" disabled>&larr; Previous</button>
+            <span id="pageInfo">Page 1 of 1</span>
+            <button id="nextPageBtn" class="btn btn-text" disabled>Next &rarr;</button>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+  <script src="dashboard.js"></script>
+</body>
+</html>
