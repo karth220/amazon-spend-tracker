@@ -327,11 +327,24 @@ async function runScanCycle() {
             "https://www.amazon.in/your-orders/orders"
           );
           togglePauseHandler(true); // Force pause
+        } else if (response.isLoggedOut) {
+          // Logged Out Block
+          showAlert(
+            "Logged Out of Amazon India",
+            "You are logged out of your Amazon.in account. Please open your Amazon tab, log in, and then click Resume Scanning here.",
+            "https://www.amazon.in/your-orders/orders"
+          );
+          togglePauseHandler(true); // Force pause
         } else {
           // Standard error
           pauseScanDueToError(response.error || "An error occurred during page scraping.");
         }
         return;
+      }
+
+      // Log diagnostics if no orders were parsed
+      if (response.diagnostics) {
+        console.log("Scraper Diagnostics received (0 orders parsed):", response.diagnostics);
       }
 
       // Scraping was successful! Process orders
