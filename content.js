@@ -3,6 +3,10 @@
 console.log("Amazon.in Spend Analyzer Content Script loaded.");
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === 'ping') {
+    sendResponse({ success: true, status: 'active' });
+    return false; // Respond synchronously
+  }
   if (request.action === 'scrape_page') {
     const { year, startIndex } = request;
     scrapePage(year, startIndex)
