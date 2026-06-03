@@ -20,17 +20,38 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
+// Helper to request background page fetches with credentials
+function fetchPageFromBackground(url) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage({ action: 'fetch_url', url: url }, (response) => {
+      const err = chrome.runtime.lastError;
+      if (err) {
+        reject(new Error(err.message));
+        return;
+      }
+      if (!response) {
+        reject(new Error("No response received from service worker"));
+        return;
+      }
+      if (!response.success) {
+        reject(new Error(response.error || "Background fetch failed"));
+        return;
+      }
+      resolve(response.text);
+    });
+  });
+}
+
 /**
  * Scrapes a single page of Amazon orders for a specific year.
  * Handles fetching, CAPTCHA detection, parsing, and returns structured data.
  */
 async function scrapePage(year, startIndex) {
-  // Use relative URLs so that fetch uses the exact subdomain and domain of the tab.
-  // This ensures host-only cookies (like session-id) are sent correctly.
+  // Use absolute URLs for background service worker fetch requests
   const urls = [
-    `/your-orders/orders?timeFilter=year-${year}&startIndex=${startIndex}`,
-    `/gp/your-account/order-history?orderFilter=year-${year}&startIndex=${startIndex}`,
-    `/gp/css/order-history?opt=history&year=${year}&startIndex=${startIndex}`
+    `https://www.amazon.in/your-orders/orders?timeFilter=year-${year}&startIndex=${startIndex}`,
+    `https://www.amazon.in/gp/your-account/order-history?orderFilter=year-${year}&startIndex=${startIndex}`,
+    `https://www.amazon.in/gp/css/order-history?opt=history&year=${year}&startIndex=${startIndex}`
   ];
 
   let htmlText = '';
@@ -39,18 +60,14 @@ async function scrapePage(year, startIndex) {
 
   for (const url of urls) {
     try {
-      const response = await fetch(url);
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      htmlText = await response.text();
+      htmlText = await fetchPageFromBackground(url);
       if (htmlText) {
         successUrl = url;
         break;
       }
     } catch (e) {
       fetchError = e;
-      console.warn(`Fetch failed for URL: ${url}. Error: ${e.message}`);
+      console.warn(`Background fetch failed for URL: ${url}. Error: ${e.message}`);
     }
   }
 
