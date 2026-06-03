@@ -171,6 +171,30 @@ function detectAmazonTab(callback) {
   });
 }
 
+// Ensure content script is injected into the Amazon tab
+function ensureContentScriptInjected(tabId, callback) {
+  // Test if content script is active by sending a ping
+  chrome.tabs.sendMessage(tabId, { action: 'ping' }, (response) => {
+    if (chrome.runtime.lastError || !response || !response.success) {
+      console.log("Content script not detected. Injecting content.js dynamically...");
+      chrome.scripting.executeScript({
+        target: { tabId: tabId },
+        files: ['content.js']
+      }).then(() => {
+        console.log("Successfully injected content.js dynamically.");
+        // Give it a tiny delay to initialize
+        setTimeout(() => callback(true), 250);
+      }).catch(err => {
+        console.error("Failed to inject content.js dynamically:", err);
+        callback(false);
+      });
+    } else {
+      console.log("Content script is already active and responding.");
+      callback(true);
+    }
+  });
+}
+
 // Populate Year Filter Selectors
 function populateYearSelectors() {
   // Clear previous options except "All"
@@ -207,33 +231,41 @@ function startScanHandler() {
     
     hideAlert();
     
-    // Set up scanning parameters
-    const selectedVal = yearSelector.value;
-    if (selectedVal === 'all') {
-      // Start with current year, and content script will feed us other years from the dropdown
-      const currentYear = new Date().getFullYear();
-      scanState.yearsToScan = [currentYear];
-    } else {
-      scanState.yearsToScan = [parseInt(selectedVal)];
-    }
+    // Ensure content script is injected before starting the scan
+    ensureContentScriptInjected(scanState.amazonTabId, (injected) => {
+      if (!injected) {
+        pauseScanDueToError("Failed to initialize connection script. Please refresh your Amazon tab and try again.");
+        return;
+      }
+      
+      // Set up scanning parameters
+      const selectedVal = yearSelector.value;
+      if (selectedVal === 'all') {
+        // Start with current year, and content script will feed us other years from the dropdown
+        const currentYear = new Date().getFullYear();
+        scanState.yearsToScan = [currentYear];
+      } else {
+        scanState.yearsToScan = [parseInt(selectedVal)];
+      }
 
-    scanState.isScanning = true;
-    scanState.isPaused = false;
-    scanState.currentYearIndex = 0;
-    scanState.currentStartIndex = 0;
-    scanState.totalScannedThisRun = 0;
+      scanState.isScanning = true;
+      scanState.isPaused = false;
+      scanState.currentYearIndex = 0;
+      scanState.currentStartIndex = 0;
+      scanState.totalScannedThisRun = 0;
 
-    // Toggle Buttons
-    scanBtn.disabled = true;
-    pauseBtn.disabled = false;
-    pauseBtn.textContent = "Pause";
-    yearSelector.disabled = true;
-    
-    progressSection.classList.remove('hidden');
-    emptyState.classList.add('hidden');
-    dashboardContent.classList.remove('hidden');
+      // Toggle Buttons
+      scanBtn.disabled = true;
+      pauseBtn.disabled = false;
+      pauseBtn.textContent = "Pause";
+      yearSelector.disabled = true;
+      
+      progressSection.classList.remove('hidden');
+      emptyState.classList.add('hidden');
+      dashboardContent.classList.remove('hidden');
 
-    runScanCycle();
+      runScanCycle();
+    });
   });
 }
 
@@ -265,13 +297,20 @@ async function runScanCycle() {
       // Check for communication errors
       if (chrome.runtime.lastError) {
         console.error("Connection Error:", chrome.runtime.lastError.message);
-        // Sometimes the user closed the tab, refresh tab detection
+        // Attempt to inject the content script dynamically and retry
         detectAmazonTab((tabFound) => {
           if (!tabFound) {
             pauseScanDueToError("Amazon tab was closed. Please open Amazon.in and resume.");
           } else {
-            // Retry
-            setTimeout(runScanCycle, 2000);
+            console.log("Tab is active, attempting to re-inject and retry...");
+            ensureContentScriptInjected(scanState.amazonTabId, (success) => {
+              if (success) {
+                // Retry scanning the page
+                setTimeout(runScanCycle, 1000);
+              } else {
+                pauseScanDueToError("Could not establish connection with the Amazon tab. Please reload your Amazon tab and try again.");
+              }
+            });
           }
         });
         return;
