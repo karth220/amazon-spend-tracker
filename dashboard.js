@@ -62,7 +62,7 @@ const exportJsonBtn = document.getElementById('exportJsonBtn');
 document.addEventListener('DOMContentLoaded', () => {
   loadData();
   setupEventListeners();
-  detectAmazonTab();
+  detectAndConnectAmazonTab(() => {});
 });
 
 // Load saved data from storage
@@ -158,30 +158,41 @@ function debounce(func, wait) {
   };
 }
 
-// Detect if an Amazon tab is open
-function detectAmazonTab(callback) {
+// Detect Amazon.in tabs and attempt to connect to an active content script
+function detectAndConnectAmazonTab(callback) {
   chrome.tabs.query({ url: '*://*.amazon.in/*' }, (tabs) => {
-    if (tabs && tabs.length > 0) {
-      scanState.amazonTabId = tabs[0].id;
-      if (callback) callback(true);
-    } else {
+    if (!tabs || tabs.length === 0) {
       scanState.amazonTabId = null;
       if (callback) callback(false);
+      return;
     }
-  });
-}
 
-// Verify if the content script is active on the Amazon tab
-function verifyContentScriptActive(tabId, callback) {
-  // Test if content script is active by sending a ping
-  chrome.tabs.sendMessage(tabId, { action: 'ping' }, (response) => {
-    if (chrome.runtime.lastError || !response || !response.success) {
-      console.warn("Content script ping failed:", chrome.runtime.lastError ? chrome.runtime.lastError.message : "No response");
-      callback(false);
-    } else {
-      console.log("Content script is active and responding.");
-      callback(true);
-    }
+    // Try to ping each matching tab to find one that is active and responding
+    let checkedCount = 0;
+    let foundActiveTab = false;
+
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, { action: 'ping' }, (response) => {
+        checkedCount++;
+        
+        // Handle lastError to prevent Chrome from throwing unhandled connection errors
+        const err = chrome.runtime.lastError;
+        
+        if (response && response.success && !foundActiveTab) {
+          foundActiveTab = true;
+          scanState.amazonTabId = tab.id;
+          console.log("Connected to active Amazon tab ID:", tab.id);
+          callback(true);
+        }
+
+        // Once all tabs are checked, if none responded, default to the first tab but report failure
+        if (checkedCount === tabs.length && !foundActiveTab) {
+          console.log("No responsive Amazon tabs detected out of", tabs.length);
+          scanState.amazonTabId = tabs[0].id; // Fallback tab ID
+          callback(false);
+        }
+      });
+    });
   });
 }
 
@@ -208,58 +219,54 @@ function populateYearSelectors() {
 function startScanHandler() {
   if (scanState.isScanning) return;
 
-  detectAmazonTab((tabFound) => {
-    if (!tabFound) {
-      // Prompt user to open Amazon.in
-      showAlert(
-        "Amazon India Tab Not Found",
-        "We could not detect an active Amazon.in tab. We are opening the orders page in a new tab. Please log in there, then return here and click 'Start Scan' again.",
-        "https://www.amazon.in/your-orders/orders"
-      );
+  detectAndConnectAmazonTab((connected) => {
+    if (!connected) {
+      if (!scanState.amazonTabId) {
+        // No Amazon tab found at all
+        showAlert(
+          "Amazon India Tab Not Found",
+          "We could not detect an active Amazon.in tab. We are opening the orders page in a new tab. Please log in there, then return here and click 'Start Scan' again.",
+          "https://www.amazon.in/your-orders/orders"
+        );
+      } else {
+        // Tab exists but did not respond to ping (needs reload)
+        showAlert(
+          "Connection Script Inactive",
+          "We found your Amazon India tab, but it is not responding. Please open your Amazon.in tab, reload/refresh the page, and then click 'Start Scan' again. This initializes the connection.",
+          "https://www.amazon.in/your-orders/orders"
+        );
+      }
       return;
     }
     
     hideAlert();
     
-    // Verify that the content script is active before starting the scan
-    verifyContentScriptActive(scanState.amazonTabId, (active) => {
-      if (!active) {
-        showAlert(
-          "Connection Script Inactive",
-          "We found your Amazon India tab, but the connection script is not active. Please open your Amazon.in tab, reload/refresh the page, and then click 'Start Scan' again. This initializes the extension connector.",
-          "https://www.amazon.in/your-orders/orders"
-        );
-        return;
-      }
-      
-      // Set up scanning parameters
-      const selectedVal = yearSelector.value;
-      if (selectedVal === 'all') {
-        // Start with current year, and content script will feed us other years from the dropdown
-        const currentYear = new Date().getFullYear();
-        scanState.yearsToScan = [currentYear];
-      } else {
-        scanState.yearsToScan = [parseInt(selectedVal)];
-      }
+    // Set up scanning parameters
+    const selectedVal = yearSelector.value;
+    if (selectedVal === 'all') {
+      const currentYear = new Date().getFullYear();
+      scanState.yearsToScan = [currentYear];
+    } else {
+      scanState.yearsToScan = [parseInt(selectedVal)];
+    }
 
-      scanState.isScanning = true;
-      scanState.isPaused = false;
-      scanState.currentYearIndex = 0;
-      scanState.currentStartIndex = 0;
-      scanState.totalScannedThisRun = 0;
+    scanState.isScanning = true;
+    scanState.isPaused = false;
+    scanState.currentYearIndex = 0;
+    scanState.currentStartIndex = 0;
+    scanState.totalScannedThisRun = 0;
 
-      // Toggle Buttons
-      scanBtn.disabled = true;
-      pauseBtn.disabled = false;
-      pauseBtn.textContent = "Pause";
-      yearSelector.disabled = true;
-      
-      progressSection.classList.remove('hidden');
-      emptyState.classList.add('hidden');
-      dashboardContent.classList.remove('hidden');
+    // Toggle Buttons
+    scanBtn.disabled = true;
+    pauseBtn.disabled = false;
+    pauseBtn.textContent = "Pause";
+    yearSelector.disabled = true;
+    
+    progressSection.classList.remove('hidden');
+    emptyState.classList.add('hidden');
+    dashboardContent.classList.remove('hidden');
 
-      runScanCycle();
-    });
+    runScanCycle();
   });
 }
 
@@ -291,19 +298,16 @@ async function runScanCycle() {
       // Check for communication errors
       if (chrome.runtime.lastError) {
         console.error("Connection Error:", chrome.runtime.lastError.message);
-        detectAmazonTab((tabFound) => {
-          if (!tabFound) {
-            pauseScanDueToError("Amazon tab was closed. Please open Amazon.in and resume.");
+        detectAndConnectAmazonTab((connected) => {
+          if (connected) {
+            // Reconnected successfully! Retry scan
+            setTimeout(runScanCycle, 1000);
           } else {
-            // Check if connection can be re-established
-            verifyContentScriptActive(scanState.amazonTabId, (active) => {
-              if (active) {
-                // Retry once
-                setTimeout(runScanCycle, 1000);
-              } else {
-                pauseScanDueToError("Connection lost with the Amazon tab. Please open your Amazon.in tab, reload/refresh the page, and click Resume.");
-              }
-            });
+            if (!scanState.amazonTabId) {
+              pauseScanDueToError("Amazon tab was closed. Please open Amazon.in and resume.");
+            } else {
+              pauseScanDueToError("Connection lost with the Amazon tab. Please open your Amazon.in tab, reload/refresh the page, and click Resume.");
+            }
           }
         });
         return;
