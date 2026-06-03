@@ -25,17 +25,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
  * Handles fetching, CAPTCHA detection, parsing, and returns structured data.
  */
 async function scrapePage(year, startIndex) {
-  // Define possible URLs to fetch from (Primary, Secondary, Tertiary) for maximum resilience
+  // Use relative URLs so that fetch uses the exact subdomain and domain of the tab.
+  // This ensures host-only cookies (like session-id) are sent correctly.
   const urls = [
-    `https://www.amazon.in/your-orders/orders?timeFilter=year-${year}&startIndex=${startIndex}`,
-    `https://www.amazon.in/gp/your-account/order-history?orderFilter=year-${year}&startIndex=${startIndex}`,
-    `https://www.amazon.in/gp/css/order-history?opt=history&year=${year}&startIndex=${startIndex}`
+    `/your-orders/orders?timeFilter=year-${year}&startIndex=${startIndex}`,
+    `/gp/your-account/order-history?orderFilter=year-${year}&startIndex=${startIndex}`,
+    `/gp/css/order-history?opt=history&year=${year}&startIndex=${startIndex}`
   ];
 
   let htmlText = '';
   let fetchError = null;
+  let successUrl = '';
 
-  // Attempt to fetch from the URL list until one succeeds
   for (const url of urls) {
     try {
       const response = await fetch(url);
@@ -43,8 +44,8 @@ async function scrapePage(year, startIndex) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
       htmlText = await response.text();
-      // If we got a valid response, break and parse
       if (htmlText) {
+        successUrl = url;
         break;
       }
     } catch (e) {
@@ -67,11 +68,15 @@ async function scrapePage(year, startIndex) {
     return { success: false, isCaptcha: true };
   }
 
-  // Use DOMParser to parse the HTML string
   const parser = new DOMParser();
   const doc = parser.parseFromString(htmlText, 'text/html');
 
-  // If startIndex is 0, we can also extract the list of all available years from the filter dropdown
+  // Check if it's a login page
+  const isLogin = htmlText.includes('ap/signin') || htmlText.includes('signin') || doc.title.includes('Sign In') || doc.title.includes('Sign-in') || htmlText.includes('nav-signin-text');
+  if (isLogin) {
+    return { success: false, isLoggedOut: true };
+  }
+
   let availableYears = [];
   if (startIndex === 0) {
     const select = doc.querySelector('select[name="timeFilter"], select[name="orderFilter"]');
@@ -88,8 +93,7 @@ async function scrapePage(year, startIndex) {
     }
   }
 
-  // Find all order card containers on the page
-  // Amazon uses different classes, but most card wrappers match these selectors
+  // Find all order cards
   const orderCards = doc.querySelectorAll('.order-card, .order, .a-box-group, div[class*="order-card"], div[id*="orderCard"]');
   const orders = [];
 
@@ -104,11 +108,30 @@ async function scrapePage(year, startIndex) {
     }
   });
 
+  // Diagnostics collect
+  let diagnostics = null;
+  if (orders.length === 0) {
+    diagnostics = {
+      title: doc.title,
+      fetchedUrl: successUrl,
+      htmlLength: htmlText.length,
+      divCount: doc.querySelectorAll('div').length,
+      boxGroupCount: doc.querySelectorAll('.a-box-group').length,
+      orderClassCount: doc.querySelectorAll('.order').length,
+      orderCardCount: doc.querySelectorAll('.order-card').length,
+      orderCardWildcardCount: doc.querySelectorAll('div[class*="order-card"]').length,
+      orderDetailsLinkCount: doc.querySelectorAll('a[href*="order-details"], a[href*="orderID="]').length,
+      bodySnippet: doc.body ? doc.body.textContent.replace(/\s+/g, ' ').substring(0, 500) : "No body content"
+    };
+    console.log("Scraper Diagnostics (0 orders):", diagnostics);
+  }
+
   return {
     success: true,
     orders,
     years: availableYears.length > 0 ? availableYears : null,
-    hasNextPage: orderCards.length >= 10 && orders.length > 0
+    hasNextPage: orderCards.length >= 10 && orders.length > 0,
+    diagnostics
   };
 }
 
